@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Delete stale top-level entries of /tmp owned by this user once /tmp gets full.
 
-An entry is stale when nothing inside it changed for AGE_HOURS and no running
+An entry is stale when nothing inside it was modified, changed or read (mtime/ctime/atime) for AGE_HOURS, nothing inside is a socket or owned by someone else, and no running
 process uses it (cwd, root, exe, open file or mapped file under it).
 Runs only while /tmp use is at or above START_PCT; deletes oldest first until
 use drops below STOP_PCT. --dry-run lists what it would delete; --force ignores
@@ -9,6 +9,7 @@ the usage thresholds (age and in-use checks still apply).
 """
 import os
 import shutil
+import stat
 import sys
 import time
 
@@ -26,10 +27,19 @@ def used_pct():
     return 100.0 * (1 - st.f_bavail / st.f_blocks)
 
 
+class Skip(Exception):
+    pass
+
+
+def last_touch(st):
+    return max(st.st_mtime, st.st_ctime, st.st_atime)
+
+
 def walk_stats(path):
-    """(newest mtime, size in bytes) of path and everything under it."""
+    """(last touch, size in bytes) of path and everything under it.
+    Raises Skip if anything inside is a socket or owned by someone else."""
     st = os.lstat(path)
-    newest, total = st.st_mtime, st.st_blocks * 512
+    newest, total = last_touch(st), st.st_blocks * 512
     if os.path.isdir(path) and not os.path.islink(path):
         for root, dirs, files in os.walk(path, onerror=lambda e: None):
             for name in dirs + files:
@@ -37,13 +47,23 @@ def walk_stats(path):
                     s = os.lstat(os.path.join(root, name))
                 except OSError:
                     continue
-                newest = max(newest, s.st_mtime)
+                if s.st_uid != UID or stat.S_ISSOCK(s.st_mode):
+                    raise Skip(name)
+                newest = max(newest, last_touch(s))
                 total += s.st_blocks * 512
     return newest, total
 
 
 def paths_in_use():
     used = set()
+    try:  # bound unix sockets show up in fds only as socket:[inode]
+        with open("/proc/net/unix") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 8 and parts[7].startswith(TMP + "/"):
+                    used.add(parts[7])
+    except OSError:
+        pass
     for pid in os.listdir("/proc"):
         if not pid.isdigit():
             continue
@@ -85,12 +105,13 @@ def main():
     for name in os.listdir(TMP):
         path = os.path.join(TMP, name)
         try:
-            if os.lstat(path).st_uid != UID or name.startswith(SKIP_PREFIXES):
+            st = os.lstat(path)
+            if st.st_uid != UID or stat.S_ISSOCK(st.st_mode) or name.startswith(SKIP_PREFIXES):
                 continue
             if any(p == path or p.startswith(path + "/") for p in in_use):
                 continue
             mtime, size = walk_stats(path)
-        except OSError:
+        except (OSError, Skip):
             continue
         if mtime < cutoff:
             candidates.append((mtime, path, size))
@@ -98,6 +119,11 @@ def main():
     for mtime, path, size in sorted(candidates):
         if not dry and not force and used_pct() < STOP_PCT:
             break
+        try:  # recheck right before deleting; it may have been touched since the scan
+            if walk_stats(path)[0] >= cutoff:
+                continue
+        except (OSError, Skip):
+            continue
         if size >= 50 * 2**20:
             print(f"{'would delete' if dry else 'delete'} {path} ({size / 2**20:.0f} MiB, idle {(time.time() - mtime) / 3600:.0f}h)")
         if not dry:
