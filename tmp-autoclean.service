@@ -1,0 +1,8 @@
+[Unit]
+Description=Delete stale /tmp entries owned by this user when /tmp fills up
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+ExecStart=%h/.local/bin/tmp-autoclean
