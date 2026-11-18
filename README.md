@@ -1,7 +1,7 @@
 # tmp-autoclean
 
-pbox's /tmp is a 16G tmpfs with a per-user quota. Every 30 min this deletes
-top-level /tmp entries owned by vi that nothing has touched for 12h and no
+Every 30 minutes, the timer looks for top-level `/tmp` entries owned by the
+user running it. It deletes entries that nothing has touched for 12 hours and no
 running process uses (cwd/exe/open/mapped files), oldest first, but only when
 /tmp is at least 50% full, stopping at 35%. Fedora's own tmpfiles cleanup only
 removes things after 10 days.
