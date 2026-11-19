@@ -1,9 +1,15 @@
 # tmp-autoclean
 
-Every 30 minutes, the timer looks for top-level `/tmp` entries owned by the
-user running it. It deletes entries that nothing has touched for 12 hours and no
-running process uses (cwd/root/exe/open/mapped files). When `/tmp` reaches 50%
-full, it deletes the oldest eligible entries first until usage drops below 35%.
+Every 30 minutes, the timer looks for top-level `/tmp` entries owned by the user
+running it. When `/tmp` is at least 50% full, it deletes entries that have gone
+12 hours without a modification, metadata change, or read and are unused by
+running processes. It deletes the oldest first until usage drops below 35%.
+Directory access times are ignored.
+
+The script skips sockets, trees containing sockets or entries owned by another
+user, and reserved name prefixes listed in `SKIP_PREFIXES` (including
+`claude-`, `systemd-private-`, `tmux-` and `ssh-`). Process-use checks are
+limited to what the invoking user can read under `/proc`.
 
 To install, run from the checkout:
 
