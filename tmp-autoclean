@@ -32,8 +32,9 @@ class Skip(Exception):
 
 
 def last_touch(st):
-    # Directory atime is skipped: this scan's own listing updates it.
-    if stat.S_ISDIR(st.st_mode):
+    # Directory and symlink atime are skipped: this scan's own listing and
+    # symlink resolution update them.
+    if stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode):
         return max(st.st_mtime, st.st_ctime)
     return max(st.st_mtime, st.st_ctime, st.st_atime)
 

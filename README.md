@@ -1,10 +1,10 @@
 # tmp-autoclean
 
 Every 30 minutes, the timer looks for top-level `/tmp` entries owned by the user
-running it. When `/tmp` is at least 50% full, it deletes entries that have gone
-recorded modification, status-change and access times all older than 12 hours
-and are unused by running processes. It deletes the oldest first until usage drops below 35%.
-Directory access times are ignored.
+running it. When `/tmp` is at least 50% full, it deletes entries that are
+unused by running processes and whose recorded modification, status-change and
+access times are all older than 12 hours. It ignores access times for directories
+and symlinks. It deletes the oldest first until usage drops below 35%.
 
 The script skips sockets, trees containing sockets or entries owned by another
 user, and reserved name prefixes listed in `SKIP_PREFIXES` (including
@@ -21,5 +21,7 @@ systemctl --user daemon-reload && systemctl --user enable --now tmp-autoclean.ti
 ```
 
 To disable cleanup, run `systemctl --user disable --now tmp-autoclean.timer`.
-To preview, run `tmp-autoclean --dry-run --force`. Tune with
-`TMP_AUTOCLEAN_AGE_HOURS`, `TMP_AUTOCLEAN_START_PCT`, and `TMP_AUTOCLEAN_STOP_PCT`.
+To preview, run `tmp-autoclean --dry-run --force`. It ignores fullness thresholds but keeps
+the age and in-use checks. It reports every eligible entry in the totals and
+prints individual paths only for entries of at least 50 MiB. Tune with
+`TMP_AUTOCLEAN_AGE_HOURS`, `TMP_AUTOCLEAN_START_PCT` and `TMP_AUTOCLEAN_STOP_PCT`.
