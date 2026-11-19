@@ -2,8 +2,8 @@
 
 Every 30 minutes, the timer looks for top-level `/tmp` entries owned by the user
 running it. When `/tmp` is at least 50% full, it deletes entries that have gone
-12 hours without a modification, metadata change, or read and are unused by
-running processes. It deletes the oldest first until usage drops below 35%.
+recorded modification, status-change and access times all older than 12 hours
+and are unused by running processes. It deletes the oldest first until usage drops below 35%.
 Directory access times are ignored.
 
 The script skips sockets, trees containing sockets or entries owned by another
