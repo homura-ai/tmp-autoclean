@@ -2,14 +2,18 @@
 """Delete stale top-level entries of /tmp owned by this user once /tmp gets full.
 
 An entry is stale when nothing inside it was modified, changed or read (mtime/ctime/atime) for AGE_HOURS, nothing inside is a socket or owned by someone else, and no running
-process uses it (cwd, root, exe, open file or mapped file under it).
-Runs only while /tmp use is at or above START_PCT; deletes oldest first until
-use drops below STOP_PCT. --dry-run lists what it would delete; --force ignores
+process uses it (cwd, root, exe, open file, mapped file or command-line path
+under it).
+Use is the higher of the filesystem's fill and this user's quota fill (tmpfs
+usrquota), since the quota can be full while the filesystem is not. Runs only
+while use is at or above START_PCT; deletes oldest first until use drops below
+STOP_PCT. At or above URGENT_PCT the idle age drops to URGENT_AGE_HOURS. --dry-run lists what it would delete; --force ignores
 the usage thresholds (age and in-use checks still apply).
 """
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import time
 
@@ -17,14 +21,35 @@ TMP = "/tmp"
 AGE_HOURS = float(os.environ.get("TMP_AUTOCLEAN_AGE_HOURS", "12"))
 START_PCT = float(os.environ.get("TMP_AUTOCLEAN_START_PCT", "50"))
 STOP_PCT = float(os.environ.get("TMP_AUTOCLEAN_STOP_PCT", "35"))
+URGENT_PCT = float(os.environ.get("TMP_AUTOCLEAN_URGENT_PCT", "80"))
+URGENT_AGE_HOURS = float(os.environ.get("TMP_AUTOCLEAN_URGENT_AGE_HOURS", "3"))
 SKIP_PREFIXES = ("claude-", "systemd-private-", "tmux-", "ssh-", ".X", ".ICE", ".font", ".XIM", ".Test",
                  "pulse-", "dbus-", "krb5", "snap-private")
 UID = os.getuid()
 
 
+def quota_pct():
+    """This user's block-quota fill on /tmp in percent, or 0 if no quota."""
+    try:
+        out = subprocess.run(["quota", "-w", "-f", TMP], capture_output=True,
+                             text=True, timeout=30).stdout.splitlines()
+    except (OSError, subprocess.SubprocessError):
+        return 0.0
+    for line in out[2:]:
+        parts = line.split()
+        try:
+            used = int(parts[1].rstrip("*"))
+            limit = int(parts[3]) or int(parts[2])
+        except (IndexError, ValueError):
+            continue
+        if limit:
+            return 100.0 * used / limit
+    return 0.0
+
+
 def used_pct():
     st = os.statvfs(TMP)
-    return 100.0 * (1 - st.f_bavail / st.f_blocks)
+    return max(100.0 * (1 - st.f_bavail / st.f_blocks), quota_pct())
 
 
 class Skip(Exception):
@@ -72,6 +97,14 @@ def paths_in_use():
         if not pid.isdigit():
             continue
         base = f"/proc/{pid}"
+        try:  # paths named on a command line (waiters, done files) count as used
+            with open(f"{base}/cmdline", "rb") as f:
+                for arg in f.read().decode(errors="replace").split("\0"):
+                    for word in arg.replace("=", " ").replace("'", " ").replace('"', " ").split():
+                        if word.startswith(TMP + "/"):
+                            used.add(word.rstrip("/"))
+        except OSError:
+            pass
         for link in ("cwd", "root", "exe"):
             try:
                 used.add(os.readlink(f"{base}/{link}"))
@@ -100,10 +133,11 @@ def main():
     dry = "--dry-run" in sys.argv
     force = "--force" in sys.argv
     pct = used_pct()
-    print(f"/tmp {pct:.0f}% used (start {START_PCT:.0f}%, stop {STOP_PCT:.0f}%, age {AGE_HOURS:g}h)")
+    age = URGENT_AGE_HOURS if pct >= URGENT_PCT else AGE_HOURS
+    print(f"/tmp {pct:.0f}% used (start {START_PCT:.0f}%, stop {STOP_PCT:.0f}%, age {age:g}h)")
     if pct < START_PCT and not force:
         return 0
-    cutoff = time.time() - AGE_HOURS * 3600
+    cutoff = time.time() - age * 3600
     in_use = paths_in_use()
     candidates = []
     for name in os.listdir(TMP):
