@@ -1,13 +1,31 @@
 # tmp-autoclean
 
-pbox's /tmp is a 16G tmpfs with a per-user quota. Every 10 min this deletes
-top-level /tmp entries owned by vi that nothing has touched for 12h (3h once
-/tmp is 80% full) and no running process uses (cwd/exe/open/mapped files or a path on its command line),
-oldest first, but only when /tmp is at least 50% full, stopping at 35%. "Full"
-is the higher of the filesystem's fill and vi's quota fill, because the quota
-can run out while the filesystem still has room. Fedora's own tmpfiles cleanup only
-removes things after 10 days.
+Every 10 minutes, the timer looks for top-level `/tmp` entries owned by the user
+running it. When `/tmp` is at least 50% full, it deletes entries that are
+unused by running processes (cwd, exe, open or mapped files, or a path on the
+command line) and whose recorded modification, status-change and access times
+are all older than 12 hours, or 3 hours once `/tmp` is at least 80% full.
+"Full" is the higher of the filesystem's fill and the user's quota fill, because
+a per-user tmpfs quota can run out while the filesystem still has room. It ignores access times for directories
+and symlinks. It deletes the oldest first until usage drops below 35%.
 
-Install: `install -m 755 tmp-autoclean ~/.local/bin/ && cp tmp-autoclean.{service,timer} ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now tmp-autoclean.timer`
-Rollback: `systemctl --user disable --now tmp-autoclean.timer`
-Preview: `tmp-autoclean --dry-run --force`. Tune with TMP_AUTOCLEAN_AGE_HOURS / _START_PCT / _STOP_PCT / _URGENT_PCT / _URGENT_AGE_HOURS.
+The script skips sockets, trees containing sockets or entries owned by another
+user, and reserved name prefixes listed in `SKIP_PREFIXES` (including
+`claude-`, `systemd-private-`, `tmux-` and `ssh-`). Process-use checks are
+limited to what the invoking user can read under `/proc`.
+
+To install, run from the checkout:
+
+```bash
+mkdir -p ~/.local/bin ~/.config/systemd/user
+install -m 755 tmp-autoclean ~/.local/bin/
+cp tmp-autoclean.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now tmp-autoclean.timer
+```
+
+To disable cleanup, run `systemctl --user disable --now tmp-autoclean.timer`.
+To preview, run `tmp-autoclean --dry-run --force`. It ignores fullness thresholds but keeps
+the age and in-use checks. It reports every eligible entry in the totals and
+prints individual paths only for entries of at least 50 MiB. Tune with
+`TMP_AUTOCLEAN_AGE_HOURS`, `TMP_AUTOCLEAN_START_PCT`, `TMP_AUTOCLEAN_STOP_PCT`,
+`TMP_AUTOCLEAN_URGENT_PCT` and `TMP_AUTOCLEAN_URGENT_AGE_HOURS`.
